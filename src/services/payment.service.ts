@@ -2,9 +2,12 @@ import { SUPPORTED_CURRENCIES } from '../constants/payment.constants';
 import type { Payment } from '../generated/prisma/client';
 import { enqueuePaymentProcessing } from '../queues/payment.queue';
 import { paymentRepository } from '../repositories/payment.repository';
+import { gatewayService } from './gateway.service';
 import { transitionPaymentStatus } from './payment-state.service';
 import { HttpError } from '../utils/httpError';
+import { GatewayTimeoutError } from '../utils/gatewayTimeoutError';
 import { PaymentStatus } from '../types/payment.types';
+import { GatewayResult } from '../types/gateway.types';
 import {
   createPaymentSchema,
   type CreatePaymentBody,
@@ -62,7 +65,61 @@ export class PaymentService {
   }
 
   async processPayment(paymentId: string) {
+    const payment = await paymentRepository.findById(paymentId);
+
+    if (!payment) {
+      throw new HttpError(404, 'Payment not found');
+    }
+
     await transitionPaymentStatus(paymentId, PaymentStatus.PROCESSING);
+
+    await paymentRepository.createEvent({
+      paymentId,
+      eventType: 'PAYMENT_PROCESSING_STARTED',
+      newStatus: PaymentStatus.PROCESSING,
+    });
+
+    try {
+      const outcome = await gatewayService.processPayment(paymentId);
+
+      if (outcome.result === GatewayResult.FAILED) {
+        await paymentRepository.createEvent({
+          paymentId,
+          eventType: 'GATEWAY_FAILED',
+          oldStatus: PaymentStatus.PROCESSING,
+          newStatus: PaymentStatus.FAILED,
+        });
+        await transitionPaymentStatus(paymentId, PaymentStatus.FAILED);
+        return;
+      }
+
+      await paymentRepository.update(paymentId, {
+        gatewayReference: outcome.gatewayReference,
+      });
+
+      await paymentRepository.createEvent({
+        paymentId,
+        eventType: 'GATEWAY_SUCCESS',
+        oldStatus: PaymentStatus.PROCESSING,
+        newStatus: PaymentStatus.SUCCESS,
+        metadata: { gatewayReference: outcome.gatewayReference },
+      });
+
+      await transitionPaymentStatus(paymentId, PaymentStatus.SUCCESS);
+    } catch (error) {
+      if (error instanceof GatewayTimeoutError) {
+        await paymentRepository.createEvent({
+          paymentId,
+          eventType: 'GATEWAY_TIMEOUT',
+          oldStatus: PaymentStatus.PROCESSING,
+          newStatus: PaymentStatus.FAILED,
+        });
+        await transitionPaymentStatus(paymentId, PaymentStatus.FAILED);
+        return;
+      }
+
+      throw error;
+    }
   }
 
   async getPaymentById(id: string) {
