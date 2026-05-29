@@ -39,6 +39,22 @@ model Payment {
   events            PaymentEvent[]
 }
 
+model WebhookEvent {
+  id          String   @id @default(uuid())
+
+  eventId     String   @unique
+
+  paymentId   String
+
+  eventType   String
+
+  payload     Json
+
+  processed   Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+}
+
 model PaymentEvent {
   id          String   @id @default(uuid())
 
