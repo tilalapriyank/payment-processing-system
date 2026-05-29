@@ -11,3 +11,48 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+}
+
+model Payment {
+  id                String        @id @default(uuid())
+
+  amount            Decimal       @db.Decimal(10,2)
+  currency          String
+
+  status            PaymentStatus @default(PENDING)
+
+  idempotencyKey    String        @unique
+
+  retryCount        Int           @default(0)
+
+  gatewayReference  String?
+
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  events            PaymentEvent[]
+}
+
+model PaymentEvent {
+  id          String   @id @default(uuid())
+
+  paymentId   String
+
+  eventType   String
+
+  oldStatus   String?
+
+  newStatus   String?
+
+  metadata    Json?
+
+  createdAt   DateTime @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+}
