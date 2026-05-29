@@ -5,8 +5,10 @@ import {
 } from '../constants/queue.constants';
 import { bullmqConnection } from '../config/redis';
 import { logger } from '../config/logger';
+import { paymentRepository } from '../repositories/payment.repository';
 import { paymentService } from '../services/payment.service';
 import type { ProcessPaymentJob } from '../types/job.types';
+import { acquireLock, releaseLock } from '../utils/redis-lock';
 
 export function startPaymentWorker(): Worker<ProcessPaymentJob> {
   const worker = new Worker<ProcessPaymentJob>(
@@ -20,7 +22,35 @@ export function startPaymentWorker(): Worker<ProcessPaymentJob> {
       const { paymentId } = job.data;
       logger.info({ paymentId, jobId: job.id }, 'Processing payment job');
 
-      await paymentService.processPayment(paymentId);
+      const lockValue = await acquireLock(paymentId);
+
+      if (!lockValue) {
+        await paymentRepository.createEvent({
+          paymentId,
+          eventType: 'PAYMENT_LOCK_SKIPPED',
+          metadata: { jobId: job.id },
+        });
+        logger.info({ paymentId, jobId: job.id }, 'Payment lock skipped');
+        return;
+      }
+
+      await paymentRepository.createEvent({
+        paymentId,
+        eventType: 'PAYMENT_LOCK_ACQUIRED',
+        metadata: { jobId: job.id },
+      });
+
+      try {
+        await paymentService.processPayment(paymentId);
+      } finally {
+        await releaseLock(paymentId, lockValue);
+
+        await paymentRepository.createEvent({
+          paymentId,
+          eventType: 'PAYMENT_LOCK_RELEASED',
+          metadata: { jobId: job.id },
+        });
+      }
     },
     { connection: bullmqConnection }
   );

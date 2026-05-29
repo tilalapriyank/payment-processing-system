@@ -3,6 +3,10 @@ import {
   PAYMENT_QUEUE_NAME,
   PROCESS_PAYMENT_JOB,
 } from '../constants/queue.constants';
+import {
+  getPaymentJobId,
+  getPaymentRetryJobId,
+} from '../constants/redis.constants';
 import { bullmqConnection } from '../config/redis';
 import { logger } from '../config/logger';
 import type { ProcessPaymentJob } from '../types/job.types';
@@ -41,7 +45,11 @@ export const paymentQueueScheduler = new JobScheduler(PAYMENT_QUEUE_NAME, {
 });
 
 export async function enqueuePaymentProcessing(paymentId: string): Promise<void> {
-  await paymentQueue.add(PROCESS_PAYMENT_JOB, { paymentId });
+  await paymentQueue.add(
+    PROCESS_PAYMENT_JOB,
+    { paymentId },
+    { jobId: getPaymentJobId(paymentId) }
+  );
 }
 
 export async function schedulePaymentRetry(
@@ -54,7 +62,7 @@ export async function schedulePaymentRetry(
     { paymentId },
     {
       delay: delayMs,
-      jobId: `payment-retry-${paymentId}-${retryCount}`,
+      jobId: getPaymentRetryJobId(paymentId, retryCount),
     }
   );
 }
