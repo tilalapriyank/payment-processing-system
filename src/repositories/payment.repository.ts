@@ -29,6 +29,16 @@ export class PaymentRepository {
   async update(id: string, data: Prisma.PaymentUpdateInput): Promise<Payment> {
     return prisma.payment.update({ where: { id }, data });
   }
+
+  async createEvent(data: {
+    paymentId: string;
+    eventType: string;
+    oldStatus?: string;
+    newStatus?: string;
+    metadata?: Prisma.InputJsonValue;
+  }) {
+    return prisma.paymentEvent.create({ data });
+  }
 }
 
 export const paymentRepository = new PaymentRepository();

@@ -1,7 +1,10 @@
 import { SUPPORTED_CURRENCIES } from '../constants/payment.constants';
 import type { Payment } from '../generated/prisma/client';
+import { enqueuePaymentProcessing } from '../queues/payment.queue';
 import { paymentRepository } from '../repositories/payment.repository';
+import { transitionPaymentStatus } from './payment-state.service';
 import { HttpError } from '../utils/httpError';
+import { PaymentStatus } from '../types/payment.types';
 import {
   createPaymentSchema,
   type CreatePaymentBody,
@@ -53,7 +56,13 @@ export class PaymentService {
       idempotencyKey,
     });
 
+    await enqueuePaymentProcessing(payment.id);
+
     return { payment: toPaymentResponse(payment), created: true };
+  }
+
+  async processPayment(paymentId: string) {
+    await transitionPaymentStatus(paymentId, PaymentStatus.PROCESSING);
   }
 
   async getPaymentById(id: string) {
