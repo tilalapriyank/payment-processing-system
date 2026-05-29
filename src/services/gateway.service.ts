@@ -15,6 +15,11 @@ function generateGatewayReference(): string {
 
 export class GatewayService {
   async processPayment(paymentId: string): Promise<GatewayOutcome> {
+    if (process.env.FORCE_GATEWAY_TIMEOUT === 'true') {
+      logger.info({ paymentId }, 'Gateway timeout (forced for testing)');
+      throw new GatewayTimeoutError();
+    }
+
     const rand = Math.random();
 
     logger.info({ paymentId, rand }, 'Simulating gateway call');

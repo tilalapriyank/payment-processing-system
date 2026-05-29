@@ -43,3 +43,18 @@ export const paymentQueueScheduler = new JobScheduler(PAYMENT_QUEUE_NAME, {
 export async function enqueuePaymentProcessing(paymentId: string): Promise<void> {
   await paymentQueue.add(PROCESS_PAYMENT_JOB, { paymentId });
 }
+
+export async function schedulePaymentRetry(
+  paymentId: string,
+  retryCount: number,
+  delayMs: number
+): Promise<void> {
+  await paymentQueue.add(
+    PROCESS_PAYMENT_JOB,
+    { paymentId },
+    {
+      delay: delayMs,
+      jobId: `payment-retry-${paymentId}-${retryCount}`,
+    }
+  );
+}

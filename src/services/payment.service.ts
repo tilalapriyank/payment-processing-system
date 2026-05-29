@@ -1,11 +1,12 @@
-import { SUPPORTED_CURRENCIES } from '../constants/payment.constants';
+import { MAX_RETRY_ATTEMPTS, SUPPORTED_CURRENCIES } from '../constants/payment.constants';
 import type { Payment } from '../generated/prisma/client';
-import { enqueuePaymentProcessing } from '../queues/payment.queue';
+import { enqueuePaymentProcessing, schedulePaymentRetry } from '../queues/payment.queue';
 import { paymentRepository } from '../repositories/payment.repository';
 import { gatewayService } from './gateway.service';
 import { transitionPaymentStatus } from './payment-state.service';
 import { HttpError } from '../utils/httpError';
 import { GatewayTimeoutError } from '../utils/gatewayTimeoutError';
+import { getRetryDelay } from '../utils/retry-delay';
 import { PaymentStatus } from '../types/payment.types';
 import { GatewayResult } from '../types/gateway.types';
 import {
@@ -71,13 +72,26 @@ export class PaymentService {
       throw new HttpError(404, 'Payment not found');
     }
 
-    await transitionPaymentStatus(paymentId, PaymentStatus.PROCESSING);
+    const isRetry = payment.retryCount > 0;
 
-    await paymentRepository.createEvent({
-      paymentId,
-      eventType: 'PAYMENT_PROCESSING_STARTED',
-      newStatus: PaymentStatus.PROCESSING,
-    });
+    if (isRetry) {
+      await paymentRepository.createEvent({
+        paymentId,
+        eventType: 'PAYMENT_RETRY_STARTED',
+        metadata: {
+          retryCount: payment.retryCount,
+          attempt: payment.retryCount + 1,
+        },
+      });
+    } else if (payment.status === PaymentStatus.PENDING) {
+      await transitionPaymentStatus(paymentId, PaymentStatus.PROCESSING);
+
+      await paymentRepository.createEvent({
+        paymentId,
+        eventType: 'PAYMENT_PROCESSING_STARTED',
+        newStatus: PaymentStatus.PROCESSING,
+      });
+    }
 
     try {
       const outcome = await gatewayService.processPayment(paymentId);
@@ -108,18 +122,55 @@ export class PaymentService {
       await transitionPaymentStatus(paymentId, PaymentStatus.SUCCESS);
     } catch (error) {
       if (error instanceof GatewayTimeoutError) {
-        await paymentRepository.createEvent({
-          paymentId,
-          eventType: 'GATEWAY_TIMEOUT',
-          oldStatus: PaymentStatus.PROCESSING,
-          newStatus: PaymentStatus.FAILED,
-        });
-        await transitionPaymentStatus(paymentId, PaymentStatus.FAILED);
+        await this.handleGatewayTimeout(payment);
         return;
       }
 
       throw error;
     }
+  }
+
+  private async handleGatewayTimeout(payment: Payment) {
+    const nextRetryCount = payment.retryCount + 1;
+
+    await paymentRepository.createEvent({
+      paymentId: payment.id,
+      eventType: 'GATEWAY_TIMEOUT',
+      oldStatus: PaymentStatus.PROCESSING,
+      metadata: {
+        retryCount: payment.retryCount,
+        nextRetryCount,
+      },
+    });
+
+    if (nextRetryCount <= MAX_RETRY_ATTEMPTS) {
+      const delayMs = getRetryDelay(nextRetryCount);
+
+      await paymentRepository.update(payment.id, { retryCount: nextRetryCount });
+
+      await paymentRepository.createEvent({
+        paymentId: payment.id,
+        eventType: 'PAYMENT_RETRY_SCHEDULED',
+        metadata: {
+          retryCount: nextRetryCount,
+          delayMs,
+          attempt: nextRetryCount + 1,
+        },
+      });
+
+      await schedulePaymentRetry(payment.id, nextRetryCount, delayMs);
+      return;
+    }
+
+    await paymentRepository.createEvent({
+      paymentId: payment.id,
+      eventType: 'PAYMENT_RETRY_EXHAUSTED',
+      oldStatus: PaymentStatus.PROCESSING,
+      newStatus: PaymentStatus.FAILED,
+      metadata: { retryCount: payment.retryCount },
+    });
+
+    await transitionPaymentStatus(payment.id, PaymentStatus.FAILED);
   }
 
   async getPaymentById(id: string) {
