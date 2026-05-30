@@ -53,6 +53,8 @@ model WebhookEvent {
   processed   Boolean  @default(false)
 
   createdAt   DateTime @default(now())
+
+  @@index([paymentId])
 }
 
 model PaymentEvent {
@@ -71,4 +73,6 @@ model PaymentEvent {
   createdAt   DateTime @default(now())
 
   payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
 }

@@ -106,6 +106,7 @@ Services:
 | `DATABASE_URL` | PostgreSQL connection string |
 | `REDIS_URL` | Redis connection string |
 | `JWT_SECRET` | Reserved for future auth (not used in current scope) |
+| `WEBHOOK_SECRET` | Optional: enables `X-Signature` HMAC-SHA256 verification on webhooks |
 | `FORCE_GATEWAY_TIMEOUT` | Optional: force gateway timeouts for retry testing |
 
 ## API Endpoints
@@ -133,9 +134,12 @@ Content-Type: application/json
 
 ### Webhook Callback
 
+When `WEBHOOK_SECRET` is set, include an HMAC-SHA256 hex digest of the raw JSON body:
+
 ```http
 POST /api/webhooks/payment
 Content-Type: application/json
+X-Signature: <hmac-sha256-hex-of-raw-body>
 
 {
   "eventId": "evt-123",
@@ -143,6 +147,8 @@ Content-Type: application/json
   "status": "SUCCESS"
 }
 ```
+
+If `WEBHOOK_SECRET` is unset, signature verification is skipped (local development only).
 
 ## Payment Lifecycle
 
@@ -259,11 +265,24 @@ src/
   server.ts       Server + worker bootstrap
 ```
 
+## Known Limitations
+
+This implementation is designed as an assignment project demonstrating fintech patterns, not as a production payment processor.
+
+Conscious trade-offs and future production enhancements:
+
+- Transactional Outbox Pattern (reliable enqueue after DB commit)
+- Optimistic locking / conditional status updates for all writers
+- Webhook replay protection (timestamp tolerance, nonce store)
+- Dead-letter queue for permanently failed jobs
+- OpenTelemetry tracing and Prometheus metrics
+- Multi-process deployment (separate API and worker containers)
+- Real PSP integration with charge-level idempotency keys
+- CI/CD with versioned Prisma migrations
+
 ## Future Improvements
 
 - JWT authentication for protected endpoints
-- Metrics/observability (Prometheus, OpenTelemetry)
-- Dead-letter queue for permanently failed jobs
 - Admin dashboard for payment audit trail
 - CI/CD pipeline with automated migrations
 

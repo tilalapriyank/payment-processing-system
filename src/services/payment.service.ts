@@ -1,5 +1,6 @@
 import { MAX_RETRY_ATTEMPTS, SUPPORTED_CURRENCIES } from '../constants/payment.constants';
-import type { Payment } from '../generated/prisma/client';
+import { logger } from '../config/logger';
+import { Prisma, type Payment } from '../generated/prisma/client';
 import { enqueuePaymentProcessing, schedulePaymentRetry } from '../queues/payment.queue';
 import { paymentRepository } from '../repositories/payment.repository';
 import { gatewayService } from './gateway.service';
@@ -54,15 +55,32 @@ export class PaymentService {
       return { payment: toPaymentResponse(existingPayment), created: false };
     }
 
-    const payment = await paymentRepository.create({
-      amount: data.amount,
-      currency,
-      idempotencyKey,
-    });
+    try {
+      const payment = await paymentRepository.create({
+        amount: data.amount,
+        currency,
+        idempotencyKey,
+      });
 
-    await enqueuePaymentProcessing(payment.id);
+      await enqueuePaymentProcessing(payment.id);
 
-    return { payment: toPaymentResponse(payment), created: true };
+      return { payment: toPaymentResponse(payment), created: true };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const racedPayment = await paymentRepository.findByIdempotencyKey(idempotencyKey);
+
+        if (!racedPayment) {
+          throw error;
+        }
+
+        return { payment: toPaymentResponse(racedPayment), created: false };
+      }
+
+      throw error;
+    }
   }
 
   async processPayment(paymentId: string) {
@@ -70,6 +88,17 @@ export class PaymentService {
 
     if (!payment) {
       throw new HttpError(404, 'Payment not found');
+    }
+
+    if (
+      payment.status === PaymentStatus.SUCCESS ||
+      payment.status === PaymentStatus.FAILED
+    ) {
+      logger.info(
+        { paymentId, status: payment.status },
+        'Payment already terminal; skipping worker processing'
+      );
+      return;
     }
 
     const isRetry = payment.retryCount > 0;

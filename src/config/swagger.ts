@@ -18,6 +18,8 @@ const swaggerDefinition = {
         properties: {
           success: { type: 'boolean', example: true },
           message: { type: 'string', example: 'Service is healthy' },
+          database: { type: 'string', enum: ['up', 'down'], example: 'up' },
+          redis: { type: 'string', enum: ['up', 'down'], example: 'up' },
           timestamp: { type: 'string', format: 'date-time' },
         },
       },
@@ -172,6 +174,16 @@ const swaggerDefinition = {
       post: {
         tags: ['Webhooks'],
         summary: 'Receive payment gateway webhook callback',
+        parameters: [
+          {
+            in: 'header',
+            name: 'X-Signature',
+            required: false,
+            schema: { type: 'string' },
+            description:
+              'HMAC-SHA256 hex digest of the raw JSON body (required when WEBHOOK_SECRET is set)',
+          },
+        ],
         requestBody: {
           required: true,
           content: {

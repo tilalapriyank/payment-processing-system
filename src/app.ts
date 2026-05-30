@@ -1,5 +1,5 @@
 import cors from 'cors';
-import express from 'express';
+import express, { type Request } from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { setupSwagger } from './config/swagger';
@@ -11,7 +11,13 @@ export const app = express();
 
 app.use(helmet());
 app.use(cors());
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      (req as Request).rawBody = buf;
+    },
+  })
+);
 
 if (process.env.NODE_ENV !== 'test') {
   app.use(

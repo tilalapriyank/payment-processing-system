@@ -6,4 +6,5 @@ export const env = {
   databaseUrl: process.env.DATABASE_URL,
   redisUrl: process.env.REDIS_URL ?? 'redis://127.0.0.1:6379',
   jwtSecret: process.env.JWT_SECRET,
+  webhookSecret: process.env.WEBHOOK_SECRET,
 } as const;
