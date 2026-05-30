@@ -10,6 +10,13 @@ const ALLOWED_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
   [PaymentStatus.FAILED]: [],
 };
 
+export function isValidPaymentTransition(
+  fromStatus: PaymentStatus,
+  toStatus: PaymentStatus
+): boolean {
+  return ALLOWED_TRANSITIONS[fromStatus].includes(toStatus);
+}
+
 export async function transitionPaymentStatus(
   paymentId: string,
   toStatus: PaymentStatus
